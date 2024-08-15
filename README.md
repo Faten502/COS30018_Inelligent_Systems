@@ -1,4 +1,4 @@
-## Welcome to the COS30018_Inelligent_Systems reposityr!
+## Welcome to the COS30018_Inelligent_Systems repositry!
 
 
 ### Weekly Reports 
