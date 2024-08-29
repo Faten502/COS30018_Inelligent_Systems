@@ -6,6 +6,8 @@
 The weekly reports for Assignment B can be found here:
 * [Task 1 Report.pdf](https://github.com/user-attachments/files/16627983/Task.1.Report.pdf)
 * [Task 2 Report.pdf](https://github.com/user-attachments/files/16712224/Task.2.Report.pdf)
+* [Task 3 Report.pdf](https://github.com/user-attachments/files/16800744/Task.3.Report.pdf)
+
 
 
 
