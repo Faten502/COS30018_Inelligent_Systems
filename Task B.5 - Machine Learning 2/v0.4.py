@@ -14,6 +14,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, GRU, SimpleRNN, Bidirectional, BatchNormalization, Activation
 from sklearn.model_selection import train_test_split
+from tensorflow.keras.metrics import MeanAbsoluteError
 
 # ------------------------------------------FUNCTION FOR LOADING & PROCESSING-------------------------------------------
 def load_and_process_data(ticker, start_date, end_date, features=['Open', 'High', 'Low', 'Close', 'Volume'],
@@ -104,87 +105,64 @@ def load_and_process_data(ticker, start_date, end_date, features=['Open', 'High'
     # Convert the sequences to numpy arrays to facilitate use with TensorFlow/Keras.
     return np.array(X_train), np.array(y_train), np.array(X_test), np.array(y_test), scalers, data_directory
 
-
 # -----------------------------------------------MODEL CREATION FUNCTION------------------------------------------------
-def create_dl_model(input_shape, num_layers, units_per_layer, layer_type, dropout_rate=0.2, use_bidirectional=False,
-                    use_batchnorm=False, activation=None):
+def create_dl_model(input_shape, n_layers=3, units=[50, 100, 150], layer_names=['LSTM', 'GRU', 'RNN'],
+                    dropout_rate=0.3, loss='mean_absolute_error', optimizer='adam', bidirectional=False,
+                    metrics=[MeanAbsoluteError()]):
     """
     Creates a deep learning model based on the specified architecture and hyperparameters.
 
     Parameters:
-    - input_shape: tuple, shape of the input data (e.g., (60, 5)).
-    - num_layers: int, number of layers to add to the model.
-    - units_per_layer: list of int, number of units (neurons) per layer.
-    - layer_type: str, type of layer to use ('LSTM', 'GRU', or 'RNN').
-    - dropout_rate: float, dropout rate for regularization (default 0.2).
-    - use_bidirectional: bool, whether to use bidirectional layers (only relevant for LSTM/GRU).
-    - use_batchnorm: bool, whether to apply batch normalization after each layer.
-    - activation: str or None, activation function to use in the layers (e.g., 'relu', 'tanh').
+    - input_shape: tuple, shape of the input data (e.g., (sequence_length, n_features)).
+    - n_layers: int, number of layers to add to the model.
+    - units: list of int, number of units (neurons) per layer.
+    - layer_names: list of str, type of layer to use per layer ('LSTM', 'GRU', or 'RNN').
+    - dropout_rate: float, dropout rate for regularization (default 0.3).
+    - loss: str, loss function to use (e.g., 'mean_absolute_error').
+    - optimizer: str, optimizer to use (e.g., 'adam').
+    - bidirectional: bool, whether to use bidirectional layers.
+    - metrics: list, list of metrics to evaluate during training.
 
     Returns:
     - model: Keras Sequential model compiled and ready for training.
     """
-    # Ensures that the number of units provided matches the number of layers specified.
-    assert len(units_per_layer) == num_layers, "Mismatch between number of layers and units per layer."
+    assert len(units) == n_layers, "The length of 'units' must equal 'n_layers'."
+    assert len(layer_names) == n_layers, "The length of 'layer_names' must equal 'n_layers'."
 
-    # Initialise a Keras Sequential model (a simple feed-forward stack of layers).
     model = Sequential()
 
-    # Choose the type of RNN-based layer based on the 'layer_type' parameter.
-    if layer_type == 'LSTM':
-        layer_class = LSTM
-    elif layer_type == 'GRU':
-        layer_class = GRU
-    elif layer_type == 'RNN':
-        layer_class = SimpleRNN
-    else:
-        raise ValueError("Invalid layer type. Choose from 'LSTM', 'GRU', or 'RNN'.")
-
-    # Add the first layer with optional bidirectionality (processing data both forward and backward).
-    if use_bidirectional:
-        model.add(Bidirectional(layer_class(units_per_layer[0], return_sequences=True, input_shape=input_shape)))
-    else:
-        model.add(layer_class(units_per_layer[0], return_sequences=True, input_shape=input_shape))
-
-    # apply activation function after the first layer (if provided).
-    if activation:
-        model.add(Activation(activation))
-
-    # apply batch normalistion to standardise inputs to the next layer.
-    if use_batchnorm:
-        model.add(BatchNormalization())
-
-    # Apply dropout to prevent overfitting by randomly deactivating neurons during training.
-    model.add(Dropout(dropout_rate))
-
-    # Add the hidden layers (same structure as the first layer, but without specifying input_shape).
-    for i in range(1, num_layers - 1):
-        if use_bidirectional:
-            model.add(Bidirectional(layer_class(units_per_layer[i], return_sequences=True)))
+    for i in range(n_layers):
+        layer_type = layer_names[i]
+        unit = units[i]
+        if layer_type == 'LSTM':
+            layer_class = LSTM
+        elif layer_type == 'GRU':
+            layer_class = GRU
+        elif layer_type == 'RNN':
+            layer_class = SimpleRNN
         else:
-            model.add(layer_class(units_per_layer[i], return_sequences=True))
+            raise ValueError("Invalid layer type. Choose from 'LSTM', 'GRU', or 'RNN'.")
 
-        if activation:
-            model.add(Activation(activation))
+        return_sequences = True if i < n_layers - 1 else False
 
-        if use_batchnorm:
-            model.add(BatchNormalization())
+        # Only set input_shape for the first layer
+        layer_kwargs = {
+            'units': unit,
+            'return_sequences': return_sequences,
+        }
+        if i == 0:
+            layer_kwargs['input_shape'] = input_shape
 
+        if bidirectional:
+            layer = Bidirectional(layer_class(**layer_kwargs))
+        else:
+            layer = layer_class(**layer_kwargs)
+
+        model.add(layer)
         model.add(Dropout(dropout_rate))
 
-    # Add the final recurrent layer (no return_sequences, as we only need the last output for regression).
-    model.add(layer_class(units_per_layer[-1], return_sequences=False))
-
-    if activation:
-        model.add(Activation(activation))
-
-    model.add(Dropout(dropout_rate))
-
-    # Add a Dense output layer with one unit (for predicting the closing stock price).
     model.add(Dense(1))
-
-    # Compile the model with the Adam optimizer and mean squared error loss function (common for regression tasks).
-    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
     return model
 # ------------------------------------------EXPERIMENTING WITH HYPERPARAMETERS-------------------------------------------
@@ -245,13 +223,13 @@ def experiment_with_hyperparameters(X_train, y_train, X_test, y_test, hyperparam
     return results, validation_histories
 
 # --------------------------------------MULTISTEP AND MULTIVARIATE PREDICTION FUNCTIONS---------------------------------
-def multistep_prediction(model, X_test, scalers, days=5):
+def multistep_prediction(model, last_sequence, scalers, days=5):
     """
-    This function predicts the closing prices for multiple future days using the trained model.
+    Predicts multiple future steps ahead using the last available data sequence.
 
     Parameters:
     - model: Trained deep learning model.
-    - X_test: The latest input data to make predictions (must be the same shape as model input).
+    - last_sequence: The last sequence from the test data.
     - scalers: Dictionary of scalers used to inverse transform the prediction.
     - days: The number of future days to predict.
 
@@ -259,27 +237,38 @@ def multistep_prediction(model, X_test, scalers, days=5):
     - future_predictions: List of predicted closing prices for 'days' future days.
     """
     future_predictions = []
+    current_sequence = last_sequence.copy()
+
+    # Index of the 'Close' feature
+    close_feature_index = list(scalers.keys()).index('Close')
 
     for _ in range(days):
-        # Use the latest available data to make a prediction
-        prediction = model.predict(np.array([X_test[-1]]))
-        predicted_price = scalers['Close'].inverse_transform(prediction)
+        # Reshape to match model input shape
+        prediction = model.predict(current_sequence.reshape(1, current_sequence.shape[0], current_sequence.shape[1]))
+        # Extract scalar value from prediction
+        prediction_value = prediction[0, 0]
 
+        # Inverse transform to get the actual price
+        predicted_price = scalers['Close'].inverse_transform([[prediction_value]])
         future_predictions.append(predicted_price[0, 0])
 
-        # Append the predicted price to the input data to predict the next step
-        next_input = np.append(X_test[-1][1:], prediction, axis=0)
-        X_test = np.append(X_test, [next_input], axis=0)
+        # Prepare next input sequence
+        next_step = current_sequence[-1, :].copy()
+        next_step[close_feature_index] = prediction_value  # Update 'Close' with predicted value
+
+        # Append new step and remove the oldest
+        current_sequence = np.vstack((current_sequence[1:], next_step))
 
     return future_predictions
 
+
 def multivariate_prediction(model, X_test, scalers):
     """
-    This function predicts the closing price using multiple features (multivariate prediction).
+    Predicts the closing price using multiple features (multivariate prediction).
 
     Parameters:
     - model: Trained deep learning model.
-    - X_test: The input data for making a prediction (must be the same shape as model input).
+    - X_test: The input data for making a prediction.
     - scalers: Dictionary of scalers used to inverse transform the prediction.
 
     Returns:
@@ -348,14 +337,15 @@ def plot_validation_loss(results, validation_histories):
     plt.xlabel("Configurations")
     plt.xticks(rotation=45)
     plt.show()
+
 # -----------------------------------------------------MAIN SCRIPT------------------------------------------------------
 # My constants and parameters for loading, processing, and modeling the data.
 COMPANY = 'CBA.AX'
 TRAIN_START = '2020-01-01'
 TRAIN_END = '2023-08-01'
-PREDICTION_DAYS = 60
+PREDICTION_DAYS = 60  # sequence_length
 
-# My 'load_and_process_data' function to load, process, and split the data.
+# Load, process, and split the data.
 X_train, y_train, X_test, y_test, scalers, data_directory = load_and_process_data(
     COMPANY, TRAIN_START, TRAIN_END,
     features=['Open', 'High', 'Low', 'Close', 'Volume'],
@@ -363,48 +353,42 @@ X_train, y_train, X_test, y_test, scalers, data_directory = load_and_process_dat
     save_local=True, load_local=False, scale_features=True
 )
 
-# Reshape the data to fit the input shape expected by the LSTM model.
-X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], len(['Open', 'High', 'Low', 'Close', 'Volume'])))
-X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], len(['Open', 'High', 'Low', 'Close', 'Volume'])))
+# Determine the number of features based on selected columns
+n_features = len(['Open', 'High', 'Low', 'Close', 'Volume'])
 
-# Define different model configurations (hyperparameter settings) to experiment with.
-hyperparameter_configurations = [
-    {
-        'num_layers': 3,
-        'units_per_layer': [50, 50, 50], # 50 units per LSTM layer.
-        'layer_type': 'LSTM',
-        'epochs': 20,  # Number of training epochs.
-        'batch_size': 32, # Batch size for mini-batch gradient descent.
-        'dropout_rate': 0.2, # Dropout rate for regularisation.
-        'use_bidirectional': True,  # Use bidirectional LSTM.
-        'activation': 'relu' # Use ReLU activation function.
-    },
-    {
-        'num_layers': 2,
-        'units_per_layer': [100, 50], # 100 and 50 units in the GRU layers.
-        'layer_type': 'GRU',
-        'epochs': 30,
-        'batch_size': 16,
-        'dropout_rate': 0.3,
-        'use_batchnorm': True, # Apply batch normalisation to this configuration.
-        'activation': 'tanh'
-    },
-    {
-        'num_layers': 4,
-        'units_per_layer': [64, 64, 32, 16],  # Multiple layers of SimpleRNN with decreasing units.
-        'layer_type': 'RNN',
-        'epochs': 25,
-        'batch_size': 64,
-        'dropout_rate': 0.2,
-        'use_bidirectional': True
-    },
-]
+# Reshape the data to fit the input shape expected by the model.
+X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], n_features))
+X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], n_features))
 
-# Run the experiments (train each model with different hyperparameters).
-results, validation_histories = experiment_with_hyperparameters(X_train, y_train, X_test, y_test, hyperparameter_configurations)
+# Set up the model parameters
+k_days = PREDICTION_DAYS  # sequence_length
+units = [50, 100, 150]    # Adjust units per layer as needed
+layer_names = ['LSTM', 'GRU', 'RNN']
+n_layers = len(units)
+dropout_rate = 0.3
+loss = 'mean_absolute_error'
+optimizer = 'adam'
+bidirectional = False
+metrics = [MeanAbsoluteError()]
 
-# Plot the validation loss results (both per epoch and as a final comparison).
-plot_validation_loss(results, validation_histories)
+# Adjust model creation to include hyperparameters
+input_shape = (X_train.shape[1], n_features)
+
+# Create the model
+model = create_dl_model(
+    input_shape=input_shape,
+    n_layers=n_layers,
+    units=units,
+    layer_names=layer_names,
+    dropout_rate=dropout_rate,
+    loss=loss,
+    optimizer=optimizer,
+    bidirectional=bidirectional,
+    metrics=metrics
+)
+
+# Train the model
+model.fit(X_train, y_train, epochs=25, batch_size=32, validation_data=(X_test, y_test), verbose=1)
 
 # ------------------------------------------MODEL SAVING AND LOADING---------------------------------------------------
 # Define the model's filename for saving/loading
@@ -413,56 +397,53 @@ model_filename = f"{data_directory}/{COMPANY}_model.h5"
 if os.path.exists(model_filename):
     model = tf.keras.models.load_model(model_filename)
 else:
+    # Create the model again if not loaded
+    model = create_dl_model(
+        input_shape=input_shape,
+        n_layers=n_layers,
+        units=units,
+        layer_names=layer_names,
+        dropout_rate=dropout_rate,
+        loss=loss,
+        optimizer=optimizer,
+        bidirectional=bidirectional,
+        metrics=metrics
+    )
     model.fit(X_train, y_train, epochs=25, batch_size=32)
     model.save(model_filename)
 
 # ------------------------------------------TESTING THE MODEL-----------------------------------------------------------
-# Download the test dataset to evaluate the model's performance.
-TEST_START = '2023-08-02'
-TEST_END = '2024-07-02'
-test_data = yf.download(COMPANY, TEST_START, TEST_END)
-actual_prices = test_data['Close'].values
+# Inverse transform y_test for plotting
+actual_prices_inversed = scalers['Close'].inverse_transform(y_test.reshape(-1, 1)).flatten()
 
-# Prepare the combined dataset for testing, including both training and new test data.
-total_dataset = pd.concat(
-    (pd.DataFrame(y_train, columns=['Close']), test_data[['Open', 'High', 'Low', 'Close', 'Volume']]), axis=0)
-
-# Apply the stored scalers to the features in the combined dataset.
-for feature in ['Open', 'High', 'Low', 'Close', 'Volume']:
-    total_dataset[feature] = scalers[feature].transform(total_dataset[feature].values.reshape(-1, 1))
-
-# Extract the model input sequences from the total dataset.
-model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS:].values
-
-# Prepare the test sequences for prediction.
-x_test = []
-for x in range(PREDICTION_DAYS, len(model_inputs)):
-    x_test.append(model_inputs[x - PREDICTION_DAYS:x])
-
-x_test = np.array(x_test) # Convert the list of sequences into a numpy array.
+# Get the last sequence from the test data
+last_sequence = X_test[-1]
 
 # Predict using multistep prediction (e.g., for the next 5 days)
-future_prices_multistep = multistep_prediction(model, X_test, scalers, days=5)
+future_prices_multistep = multistep_prediction(model, last_sequence, scalers, days=5)
 print(f"Multistep predicted prices for the next 5 days: {future_prices_multistep}")
 
 # Predict using multivariate prediction (for one specific day)
 predicted_price_multivariate = multivariate_prediction(model, X_test, scalers)
 print(f"Multivariate predicted closing price: {predicted_price_multivariate}")
 
-# Predict using multivariate multistep prediction (for the next 5 days)
-future_prices_multivariate_multistep = multivariate_multistep_prediction(model, X_test, scalers, days=5)
-print(f"Multivariate multistep predicted prices for the next 5 days: {future_prices_multivariate_multistep}")
-
-# Example of how you might visualize the results for multistep predictions
+# Plotting
 plt.figure(figsize=(14, 7))
-plt.plot(range(len(actual_prices)), actual_prices, color="black", label="Actual Prices")
-plt.plot(range(len(actual_prices), len(actual_prices) + 5), future_prices_multistep, color="blue", label="Multistep Predicted Prices")
-plt.plot(range(len(actual_prices), len(actual_prices) + 5), future_prices_multivariate_multistep, color="green", label="Multivariate Multistep Predicted Prices")
-plt.title(f"{COMPANY} Share Price Prediction for Next 5 Days")
+plt.plot(range(len(actual_prices_inversed)), actual_prices_inversed, color="black", label="Actual Prices")
+
+# Plot multistep predictions
+plt.plot(range(len(actual_prices_inversed), len(actual_prices_inversed) + len(future_prices_multistep)),
+         future_prices_multistep, color="blue", label="Multistep Predicted Prices")
+
+# Plot multivariate prediction as a single point
+plt.scatter(len(actual_prices_inversed), predicted_price_multivariate, color="red", label="Multivariate Predicted Price")
+
+plt.title(f"{COMPANY} Share Price Predictions")
 plt.xlabel("Time")
 plt.ylabel(f"{COMPANY} Share Price")
 plt.legend()
 plt.show()
+
 # --------------------------------------------CANDLESTICK CHART---------------------------------------------------------
 def plot_candlestick(input_df, n=1):
     """
@@ -494,7 +475,6 @@ def plot_candlestick(input_df, n=1):
     # Plotting the candlestick chart using mplfinance
     mpf.plot(input_df, type='candle', style='charles', title='Candlestick Chart', ylabel='Price', volume=True)
 
-plot_candlestick(test_data, n=5)
 # ---------------------------------------------BOXPLOT CHART------------------------------------------------------------
 def plot_boxplot(input_df, n=1, k=10):
     """
@@ -543,8 +523,16 @@ def plot_boxplot(input_df, n=1, k=10):
 
     plt.show()
 
-# Now call the function with test_data
+# Now call the functions with test_data
+# Download the test dataset to evaluate the model's performance.
+TEST_START = '2023-08-02'
+TEST_END = '2024-07-02'
+test_data = yf.download(COMPANY, TEST_START, TEST_END)
+actual_prices = test_data['Close'].values
+
+plot_candlestick(test_data, n=5)
 plot_boxplot(test_data, n=1, k=10)
+
 # --------------------------------------------ADDITIONAL CHARTS & VISUALS-----------------------------------------------
 # Candlestick chart for the test period using mplfinance
 mpf.plot(test_data, type='candle', style='charles', title=f'{COMPANY} Candlestick Chart', ylabel='Price', volume=True)
@@ -560,9 +548,20 @@ plt.legend()
 plt.show()
 
 # -------------------------------------------PREDICTING FUTURE DAYS-----------------------------------------------------
-# Predicting the next 5 days.
+# Predicting the next 5 days using the trained model.
 num_days_to_predict = 5
 future_predictions = []
+
+# Prepare the combined dataset for testing, including both training and new test data.
+total_dataset = pd.concat(
+    (pd.DataFrame(y_train, columns=['Close']), test_data[['Open', 'High', 'Low', 'Close', 'Volume']]), axis=0)
+
+# Apply the stored scalers to the features in the combined dataset.
+for feature in ['Open', 'High', 'Low', 'Close', 'Volume']:
+    total_dataset[feature] = scalers[feature].transform(total_dataset[feature].values.reshape(-1, 1))
+
+# Extract the model input sequences from the total dataset.
+model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS:].values
 
 for _ in range(num_days_to_predict):
     # Prepare the latest data sequence for prediction.
@@ -580,7 +579,7 @@ future_predictions = scalers['Close'].inverse_transform(np.array(future_predicti
 # Plot the predicted future prices for the next 5 days.
 plt.figure(figsize=(14, 7))
 plt.plot(range(len(actual_prices)), actual_prices, color="black", label="Actual Prices")
-plt.plot(range(len(actual_prices), len(actual_prices) + num_days_to_predict), future_predictions, color="blue",
+plt.plot(range(len(actual_prices), len(actual_prices) + num_days_to_predict), future_predictions.flatten(), color="blue",
          label="Predicted Next Days")
 plt.title(f"{COMPANY} Share Price Prediction for Next {num_days_to_predict} Days")
 plt.xlabel("Time")
